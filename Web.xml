@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+ji<?xml version="1.0" encoding="UTF-8"?>
 <web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
@@ -7,7 +7,104 @@
 
   <error-page>
     <error-code>404</error-code>
+[20/08, 10:05 am] Mohit Negi: import com.nimbusds.jose.*;
+import com.nimbusds.jose.crypto.MACSigner;
+import com.nimbusds.jose.crypto.MACVerifier;
+import com.nimbusds.jwt.SignedJWT;
+import net.minidev.json.JSONArray;
+import net.minidev.json.JSONObject;
+import org.springframework.stereotype.Component;
 
+import java.text.ParseException;
+import java.util.Base64;
+
+@Component
+public class JwtUtility {
+
+    private static final String SECRET = "your-256-bit-secret"; // Replace with a strong secret key
+
+    public String generateEncryptedJwt(Long authId, JSONArray permissions, JSONObject keyValuePairs) throws JOSEException {
+        // Create the JSON object to include in JWT
+        JSONObject jwtPayload = new JSONObject();
+        jwtPayload.put("authId", authId);
+        jwtPayload.put("permissions", permissions);
+        jwtPayload.put("keyValuePairs", keyValuePairs);
+
+        // Create the JWT
+        JWSSigner signer = new MACSigner(Base64.getEncoder().encodeToString(SECRET.getBytes()));
+        SignedJWT signedJWT = new SignedJWT(
+            new JWSHeader(JWSAlgorithm.HS256),
+            new JWTClaimsSet.Builder()
+                .claim("data", jwtPayload)
+                .build()
+        );
+
+        // Sign the JWT
+        signedJWT.sign(signer);
+
+        return signedJWT.serialize();
+    }
+
+    public JSONObject parseEncryptedJwt(String jwt) throws JOSEException, ParseException {
+        SignedJWT signedJWT = SignedJWT.parse(jwt);
+        JWSVerifier verifier = new MACVerifier(Base64.getEncoder().encodeToString(SECRET.getBytes()));
+
+        if (signedJWT.verify(verifier)) {
+            return (JSONObject) signedJWT.getJWTClaimsSet().getClaim("data");
+        } else {
+            throw new JOSEException("JWT signature verification failed");
+        }
+    }
+}
+[20/08, 10:05 am] Mohit Negi: import org.springframework.security.access.ConfigAttribute;
+import org.springframework.security.web.access.intercept.FilterInvocationSecurityMetadataSource;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.stereotype.Component;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.*;
+
+@Component
+public class CustomSecurityMetadataSource implements FilterInvocationSecurityMetadataSource {
+
+    private final Map<RequestMatcher, Collection<ConfigAttribute>> requestMap = new HashMap<>();
+
+    public void updateSecurityMetadata(Long authId, JSONArray permissions, JSONObject keyValuePairs) {
+        // Map permissions to URLs or actions
+        for (Object permissionObj : permissions) {
+            String permission = (String) permissionObj;
+            RequestMatcher matcher = new AntPathRequestMatcher("/" + permission + "/**");
+            Collection<ConfigAttribute> configAttributes = List.of(
+                new SecurityConfig("ROLE_" + permission.toUpperCase())
+            );
+            requestMap.put(matcher, configAttributes);
+        }
+
+        // Optionally, use keyValuePairs for other dynamic configurations if needed
+    }
+
+    @Override
+    public Collection<ConfigAttribute> getAttributes(Object object) throws IllegalArgumentException {
+        HttpServletRequest request = ((FilterInvocation) object).getRequest();
+        for (Map.Entry<RequestMatcher, Collection<ConfigAttribute>> entry : requestMap.entrySet()) {
+            if (entry.getKey().matches(request)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Collection<ConfigAttribute> getAllConfigAttributes() {
+        return requestMap.values().stream().flatMap(Collection::stream).toList();
+    }
+
+    @Override
+    public boolean supports(Class<?> clazz) {
+        return FilterInvocation.class.isAssignableFrom(clazz);
+    }
+}
 
 
 [20/08, 10:20 am] Mohit Negi: import org.springframework.beans.factory.annotation.Autowired;
