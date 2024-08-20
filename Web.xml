@@ -7,6 +7,103 @@
 
   <error-page>
     <error-code>404</error-code>
-    <location>/index.html</location>
-  </error-page>
-</web-app>
+
+
+
+[20/08, 10:20 am] Mohit Negi: import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.FilterSecurityInterceptor;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Autowired
+    private CustomSecurityMetadataSource customSecurityMetadataSource;
+
+    @Autowired
+    private JwtUtility jwtUtility;
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeRequests(authorizeRequests ->
+                authorizeRequests.anyRequest().authenticated()
+            )
+            .addFilterBefore(filterSecurityInterceptor(), FilterSecurityInterceptor.class);
+        return http.build();
+    }
+
+    @Bean
+    public FilterSecurityInterceptor filterSecurityInterceptor() throws Exception {
+        FilterSecurityInterceptor filterSecurityInterceptor = new FilterSecurityInterceptor();
+        filterSecurityInterceptor.setSecurityMetadataSource(customSecurityMetadataSource);
+        return filterSecurityInterceptor;
+    }
+
+   
+    @Bean
+    public void loadInitialSecurityConfig() throws Exception {
+        String jwt =;
+
+        JSONObject jwtData = jwtUtility.parseEncryptedJwt(jwt);
+        Long authId = (Long) jwtData.get("authId");
+        JSONArray permissions = (JSONArray) jwtData.get("permissions");
+        JSONObject keyValuePairs = (JSONObject) jwtData.get("keyValuePairs");
+
+        customSecurityMetadataSource.updateSecurityMetadata(authId, permissions, keyValuePairs);
+    }
+}
+[20/08, 10:22 am] Mohit Negi: import org.springframework.security.access.ConfigAttribute;
+import org.springframework.security.web.access.intercept.FilterInvocationSecurityMetadataSource;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.stereotype.Component;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.*;
+
+@Component
+public class CustomSecurityMetadataSource implements FilterInvocationSecurityMetadataSource {
+
+    private final Map<RequestMatcher, Collection<ConfigAttribute>> requestMap = new HashMap<>();
+
+    public void updateSecurityMetadata(Long authId, JSONArray permissions, JSONObject keyValuePairs) {
+        
+        for (Object permissionObj : permissions) {
+            String permission = (String) permissionObj;
+            RequestMatcher matcher = new AntPathRequestMatcher("/" + permission + "/**");
+            Collection<ConfigAttribute> configAttributes = List.of(
+                new SecurityConfig("ROLE_" + permission.toUpperCase())
+            );
+            requestMap.put(matcher, configAttributes);
+        }
+
+       
+    }
+
+    @Override
+    public Collection<ConfigAttribute> getAttributes(Object object) throws IllegalArgumentException {
+        HttpServletRequest request = ((FilterInvocation) object).getRequest();
+        for (Map.Entry<RequestMatcher, Collection<ConfigAttribute>> entry : requestMap.entrySet()) {
+            if (entry.getKey().matches(request)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Collection<ConfigAttribute> getAllConfigAttributes() {
+        return requestMap.values().stream().flatMap(Collection::stream).toList();
+    }
+
+    @Override
+    public boolean supports(Class<?> clazz) {
+        return FilterInvocation.class.isAssignableFrom(clazz);
+    }
+}
